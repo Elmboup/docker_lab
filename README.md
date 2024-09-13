@@ -40,6 +40,16 @@ docker run -d -p8000:8000 --name FlaskApp \
 -e DATABASE_PASSWORD=passer  \
 my-flask-app
 ```
+or
+```sh
+docker run -d -p8000:8000 --name FlaskApp \
+--network my-net \
+-e DATABASE_HOST=mydatabase \
+-e DATABASE_PORT=5432 \ 
+-e DATABASE_USER=user \
+-e DATABASE_PASSWORD=passer  \
+ehmboup/flaskapp:v2.0.0
+```
 
 Navigate to your app on localhost:8000 
 
