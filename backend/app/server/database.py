@@ -1,61 +1,86 @@
-import motor.motor_asyncio
-from bson.objectid import ObjectId
+import asyncpg
 import os
-MONGO_DETAILS = "mongodb://{db_user}:{db_pwd}@{db_host}:{db_port}/".format(db_user=os.environ["DATABASE_USER"], db_pwd=os.environ["DATABASE_PASSWORD"], db_host=os.environ["DATABASE_HOST"], db_port=os.environ["DATABASE_PORT"])
-client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_DETAILS)
-database = client.employees
-employee_collection = database.get_collection("employees_collection")
 
+# Define the PostgreSQL connection details using environment variables
+DATABASE_URL = "postgresql://{user}:{password}@{host}:{port}/{dbname}".format(
+    user=os.environ["DATABASE_USER"],
+    password=os.environ["DATABASE_PASSWORD"],
+    host=os.environ["DATABASE_HOST"],
+    port=os.environ["DATABASE_PORT"],
+    dbname=os.environ["DATABASE_NAME"],
+)
+
+# Initialize connection to PostgreSQL
+async def init_db():
+    return await asyncpg.connect(DATABASE_URL)
+
+# Define a helper function to format the employee data as a dictionary
 def employee_helper(employee) -> dict:
     return {
-        "id": str(employee["_id"]),
-        "firstName": employee["firstName"],
-        "lastName": employee["lastName"],
+        "id": employee["id"],
+        "firstName": employee["first_name"],
+        "lastName": employee["last_name"],
         "profile": employee["profile"],
         "salary": employee["salary"],
         "integration": employee["integration"]
-        }
+    }
 
 # Retrieve all employees present in the database
 async def retrieve_employees():
+    conn = await init_db()
     employees = []
-    async for employee in employee_collection.find():
-        employees.append(employee_helper(employee))
+    rows = await conn.fetch("SELECT * FROM employees_collection")
+    for row in rows:
+        employees.append(employee_helper(row))
+    await conn.close()
     return employees
 
-
-# Add a new employee into to the database
+# Add a new employee to the database
 async def add_employee(employee_data: dict) -> dict:
-    employee = await employee_collection.insert_one(employee_data)
-    new_employee = await employee_collection.find_one({"_id": employee.inserted_id})
-    return employee_helper(new_employee)
+    conn = await init_db()
+    query = """
+    INSERT INTO employees_collection (first_name, last_name, profile, salary, integration)
+    VALUES ($1, $2, $3, $4, $5) RETURNING id
+    """
+    employee_id = await conn.fetchval(
+        query, 
+        employee_data["firstName"], 
+        employee_data["lastName"], 
+        employee_data["profile"], 
+        employee_data["salary"], 
+        employee_data["integration"]
+    )
+    employee_data["id"] = employee_id
+    await conn.close()
+    return employee_data
 
-
-# Retrieve a employee with a matching ID
-async def retrieve_employee(id: str) -> dict:
-    employee = await employee_collection.find_one({"_id": ObjectId(id)})
+# Retrieve an employee with a matching ID
+async def retrieve_employee(id: int) -> dict:
+    conn = await init_db()
+    query = "SELECT * FROM employees_collection WHERE id = $1"
+    employee = await conn.fetchrow(query, id)
+    await conn.close()
     if employee:
         return employee_helper(employee)
 
-
-# Update a employee with a matching ID
-async def update_employee(id: str, data: dict):
-    # Return false if an empty request body is sent.
-    if len(data) < 1:
+# Update an employee with a matching ID
+async def update_employee(id: int, data: dict) -> bool:
+    if not data:
         return False
-    employee = await employee_collection.find_one({"_id": ObjectId(id)})
-    if employee:
-        updated_employee = await employee_collection.update_one(
-            {"_id": ObjectId(id)}, {"$set": data}
-        )
-        if updated_employee:
-            return True
-        return False
+    
+    conn = await init_db()
+    set_query = ", ".join([f"{k} = ${i+2}" for i, k in enumerate(data.keys())])
+    query = f"UPDATE employees_collection SET {set_query} WHERE id = $1"
+    values = [id] + list(data.values())
+    
+    result = await conn.execute(query, *values)
+    await conn.close()
+    return result == "UPDATE 1"
 
-
-# Delete a employee from the database
-async def delete_employee(id: str):
-    employee = await employee_collection.find_one({"_id": ObjectId(id)})
-    if employee:
-        await employee_collection.delete_one({"_id": ObjectId(id)})
-        return True
+# Delete an employee from the database
+async def delete_employee(id: int) -> bool:
+    conn = await init_db()
+    query = "DELETE FROM employees_collection WHERE id = $1"
+    result = await conn.execute(query, id)
+    await conn.close()
+    return result == "DELETE 1"
